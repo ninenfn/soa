@@ -1,0 +1,160 @@
+services:
+  booking-service:
+    build: ./booking-service
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://booking_user:booking_pass@postgres-booking:5432/booking_db
+      - FLIGHT_SERVICE_HOST=flight-service
+      - FLIGHT_SERVICE_PORT=50051
+      - FLIGHT_SERVICE_API_KEY=secret-key-123
+      - CB_FAILURE_THRESHOLD=5
+      - CB_TIMEOUT=30
+    depends_on:
+      postgres-booking:
+        condition: service_healthy
+      flight-service:
+        condition: service_started
+    networks:
+      - booking-network
+    volumes:
+      - ./booking-service/migrations:/migrations
+
+  flight-service:
+    build: ./flight-service
+    ports:
+      - "50051:50051"
+    environment:
+      - DATABASE_URL=postgresql://flight_user:flight_pass@postgres-flight:5432/flight_db
+      - REDIS_SENTINEL_HOST_1=redis-sentinel-1
+      - REDIS_SENTINEL_PORT_1=26379
+      - REDIS_SENTINEL_HOST_2=redis-sentinel-2
+      - REDIS_SENTINEL_PORT_2=26380
+      - REDIS_SENTINEL_HOST_3=redis-sentinel-3
+      - REDIS_SENTINEL_PORT_3=26381
+      - REDIS_PASSWORD=redispass
+      - FLIGHT_SERVICE_API_KEY=secret-key-123
+    depends_on:
+      postgres-flight:
+        condition: service_healthy
+      redis-master:
+        condition: service_started
+      redis-sentinel-1:
+        condition: service_started
+      redis-sentinel-2:
+        condition: service_started
+      redis-sentinel-3:
+        condition: service_started
+    networks:
+      - booking-network
+    volumes:
+      - ./flight-service/migrations:/migrations
+
+  postgres-booking:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=booking_user
+      - POSTGRES_PASSWORD=booking_pass
+      - POSTGRES_DB=booking_db
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - booking-network
+    volumes:
+      - postgres-booking-data:/var/lib/postgresql/data
+
+  postgres-flight:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=flight_user
+      - POSTGRES_PASSWORD=flight_pass
+      - POSTGRES_DB=flight_db
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flight_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - booking-network
+    volumes:
+      - postgres-flight-data:/var/lib/postgresql/data
+
+  redis-master:
+    image: redis:7-alpine
+    command: redis-server --port 6379 --requirepass redispass
+    ports:
+      - "6379:6379"
+    networks:
+      - booking-network
+    volumes:
+      - redis-master-data:/data
+
+  redis-replica:
+    image: redis:7-alpine
+    command: >
+      redis-server --port 6380 --replicaof redis-master 6379 
+      --masterauth redispass --requirepass redispass
+    ports:
+      - "6380:6380"
+    depends_on:
+      - redis-master
+    networks:
+      - booking-network
+    volumes:
+      - redis-replica-data:/data
+
+  redis-sentinel-1:
+    image: redis:7-alpine
+    command: redis-sentinel /sentinel.conf
+    volumes:
+      - ./sentinel1.conf:/sentinel.conf
+    ports:
+      - "26379:26379"
+    depends_on:
+      - redis-master
+      - redis-replica
+    networks:
+      - booking-network
+
+  redis-sentinel-2:
+    image: redis:7-alpine
+    command: redis-sentinel /sentinel.conf
+    volumes:
+      - ./sentinel2.conf:/sentinel.conf
+    ports:
+      - "26380:26380"
+    depends_on:
+      - redis-master
+      - redis-replica
+    networks:
+      - booking-network
+
+  redis-sentinel-3:
+    image: redis:7-alpine
+    command: redis-sentinel /sentinel.conf
+    volumes:
+      - ./sentinel3.conf:/sentinel.conf
+    ports:
+      - "26381:26381"
+    depends_on:
+      - redis-master
+      - redis-replica
+    networks:
+      - booking-network
+
+networks:
+  booking-network:
+    driver: bridge
+
+volumes:
+  postgres-booking-data:
+  postgres-flight-data:
+  redis-master-data:
+  redis-replica-data:
